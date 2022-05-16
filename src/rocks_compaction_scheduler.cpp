@@ -41,6 +41,7 @@
 #include "mongo/util/background.h"
 #include "mongo/util/concurrency/idle_thread_block.h"
 #include "mongo/util/log.h"
+#include "mongo/util/timer.h"
 #include "rocks_util.h"
 
 #include <rocksdb/compaction_filter.h>
@@ -246,16 +247,19 @@ namespace mongo {
     }
 
     void CompactionBackgroundJob::compact(const CompactOp& op) {
+        Timer start;
+
         rocksdb::Slice start_slice(op._start_str);
         rocksdb::Slice end_slice(op._end_str);
 
         rocksdb::Slice* start = !op._start_str.empty() ? &start_slice : nullptr;
         rocksdb::Slice* end = !op._end_str.empty() ? &end_slice : nullptr;
 
-        LOG(1) << "Starting compaction of range: "
-              << (start ? start->ToString(true) : "<begin>") << " .. "
-              << (end ? end->ToString(true) : "<end>")
-              << " (rangeDropped is " << op._rangeDropped << ")";
+        LOG(1) << "Starting compaction of range:"
+              << (start ? start->ToString(true) : "<empty>") << " .. "
+              << (end ? end->ToString(true) : "<empty>")
+              << " (rangeDropped is " << op._rangeDropped << ")"
+              << " (orderType is " << op._order << ")";
 
         if (op._rangeDropped) {
             auto s = rocksdb::DeleteFilesInRange(_db, _db->DefaultColumnFamily(), start, end);
@@ -268,6 +272,26 @@ namespace mongo {
         compact_options.bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kForce;
         compact_options.exclusive_manual_compaction = false;
         auto s = _db->CompactRange(compact_options, start, end);
+        
+        auto compactionCsMs = start.millis();
+        LOG(1) << "End compaction of range:"
+              << (start ? start->ToString(true) : "<empty>") << " .. "
+              << (end ? end->ToString(true) : "<empty>")
+              << " (rangeDropped is " << op._rangeDropped << ")"
+              << " (orderType is " << op._order << ")"
+              << " (result is " << s.ok() << ")"
+              << " (consume time ms is " << compactionCsMs << ")";
+
+        if (start == nullptr && end == nullptr) {
+            LOG(0) << "End All Compaction of range:"
+                << (start ? start->ToString(true) : "<empty>") << " .. "
+                << (end ? end->ToString(true) : "<empty>")
+                << " (rangeDropped is " << op._rangeDropped << ")"
+                << " (orderType is " << op._order << ")"
+                << " (result is " << s.ok() << ")"
+                << " (consume time ms is " << compactionCsMs << ")";
+        }
+
         if (!s.ok()) {
             log() << "Failed to compact range: " << s.ToString();
 
