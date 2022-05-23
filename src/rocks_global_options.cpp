@@ -87,6 +87,13 @@ namespace mongo {
                                "This is still experimental. "
                                "Use this only if you know what you're doing")
             .setDefault(moe::Value(false));
+       
+        rocksOptions
+            .addOptionChaining("storage.rocksdb.manualPrefixCompaction",
+                               "rocksdbManualPrefixCompaction", 
+                               moe::Bool,
+                               "if true, we will trigge RocksCompactionScheduler::compactPrefix when skip too many delete key")
+            .setDefault(moe::Value(false));
 
         return options->addSection(rocksOptions);
     }
@@ -120,6 +127,10 @@ namespace mongo {
             rocksGlobalOptions.singleDeleteIndex =
               params["storage.rocksdb.singleDeleteIndex"].as<bool>();
         }
+        if (params.count("storage.rocksdb.manualPrefixCompaction")) {
+            rocksGlobalOptions.manualPrefixCompaction =
+                params["storage.rocksdb.manualPrefixCompaction"].as<bool>();
+        }
 
         return Status::OK();
     }
@@ -132,5 +143,6 @@ namespace mongo {
         log() << "[RocksDB] Crash safe counters: " << rocksGlobalOptions.crashSafeCounters;
         log() << "[RocksDB] Counters: " << rocksGlobalOptions.counters;
         log() << "[RocksDB] Use SingleDelete in index: " << rocksGlobalOptions.singleDeleteIndex;
+        log() << "[RocksDB] Manual Prefix Compaction: " << rocksGlobalOptions.manualPrefixCompaction;
     }
 }  // namespace mongo

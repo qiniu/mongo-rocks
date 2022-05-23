@@ -195,7 +195,7 @@ namespace mongo {
         }
 
         // used in building options for the db
-        _compactionScheduler.reset(new RocksCompactionScheduler());
+        _compactionScheduler.reset(new RocksCompactionScheduler(rocksGlobalOptions.manualPrefixCompaction));
 
         // open DB
         rocksdb::DB* db;

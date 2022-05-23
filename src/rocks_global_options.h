@@ -42,7 +42,8 @@ namespace mongo {
               maxWriteMBPerSec(1024),
               compression("snappy"),
               crashSafeCounters(false),
-              singleDeleteIndex(false) {}
+              singleDeleteIndex(false), 
+              manualPrefixCompaction(false) {}
 
         Status add(moe::OptionSection* options);
         Status store(const moe::Environment& params, const std::vector<std::string>& args);
@@ -57,6 +58,8 @@ namespace mongo {
         bool crashSafeCounters;
         bool counters;
         bool singleDeleteIndex;
+        // 手动prefix compaction开启的开关,默认关闭； 
+        bool manualPrefixCompaction;
     };
 
     extern RocksGlobalOptions rocksGlobalOptions;

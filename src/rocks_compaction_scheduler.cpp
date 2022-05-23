@@ -41,6 +41,7 @@
 #include "mongo/util/background.h"
 #include "mongo/util/concurrency/idle_thread_block.h"
 #include "mongo/util/log.h"
+#include "mongo/util/timer.h"
 #include "rocks_util.h"
 
 #include <rocksdb/compaction_filter.h>
@@ -246,16 +247,24 @@ namespace mongo {
     }
 
     void CompactionBackgroundJob::compact(const CompactOp& op) {
+        Timer startTime;
+
         rocksdb::Slice start_slice(op._start_str);
         rocksdb::Slice end_slice(op._end_str);
 
         rocksdb::Slice* start = !op._start_str.empty() ? &start_slice : nullptr;
         rocksdb::Slice* end = !op._end_str.empty() ? &end_slice : nullptr;
 
-        LOG(1) << "Starting compaction of range: "
-              << (start ? start->ToString(true) : "<begin>") << " .. "
-              << (end ? end->ToString(true) : "<end>")
-              << " (rangeDropped is " << op._rangeDropped << ")";
+        std::string fullCompaction = "";
+        if (start == nullptr && end == nullptr) {
+            fullCompaction = "Full ";
+        }
+
+        LOG(0) << "Starting " << fullCompaction << "compaction of range:"
+              << (start ? start->ToString(true) : "<empty>") << " .. "
+              << (end ? end->ToString(true) : "<empty>")
+              << " (rangeDropped is " << op._rangeDropped << ")"
+              << " (orderType is " << op._order << ")";
 
         if (op._rangeDropped) {
             auto s = rocksdb::DeleteFilesInRange(_db, _db->DefaultColumnFamily(), start, end);
@@ -268,6 +277,18 @@ namespace mongo {
         compact_options.bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kForce;
         compact_options.exclusive_manual_compaction = false;
         auto s = _db->CompactRange(compact_options, start, end);
+        
+        auto compactionCsMs = startTime.millis();
+
+        LOG(0) << "End " << fullCompaction << "Compaction of range:"
+            << (start ? start->ToString(true) : "<empty>") << " .. "
+            << (end ? end->ToString(true) : "<empty>")
+            << " (rangeDropped is " << op._rangeDropped << ")"
+            << " (orderType is " << op._order << ")"
+            << " (result is " << s.ok() << ")"
+            << " (consume time ms is " << compactionCsMs << ")";
+
+
         if (!s.ok()) {
             log() << "Failed to compact range: " << s.ToString();
 
@@ -281,10 +302,16 @@ namespace mongo {
         _compactionScheduler->notifyCompacted(op._start_str, op._end_str, op._rangeDropped, s.ok());
     }
 
+
     // first four bytes are the default prefix 0
     const std::string RocksCompactionScheduler::kDroppedPrefix("\0\0\0\0droppedprefix-", 18);
 
-    RocksCompactionScheduler::RocksCompactionScheduler() : _db(nullptr), _droppedPrefixesCount(0) {}
+    RocksCompactionScheduler::RocksCompactionScheduler(bool manualPrefixCompaction) 
+        : _db(nullptr), 
+        _manualPrefixCompaction(manualPrefixCompaction), 
+        _droppedPrefixesCount(0)  {
+            log() << "[rocksdb] manual prefix compaction:" << _manualPrefixCompaction;
+        }
 
     void RocksCompactionScheduler::start(rocksdb::DB* db) {
         _db = db;
@@ -297,10 +324,13 @@ namespace mongo {
         {
             stdx::lock_guard<stdx::mutex> lk(_lock);
             if (_timer.minutes() >= kMinCompactionIntervalMins) {
-                // schedule = true;
+                if (_manualPrefixCompaction) {
+                    schedule = true; //恢复手动触发的compaction
+                }
                 _timer.reset();
             }
         }
+
         if (schedule) {
             log() << "Scheduling compaction to clean up tombstones for prefix "
                   << rocksdb::Slice(prefix).ToString(true);

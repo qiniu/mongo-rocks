@@ -181,6 +181,7 @@ namespace mongo {
                                          _rocksdbSkippedDeletionsInitial;
                 if (skippedDeletionsOp >=
                     RocksCompactionScheduler::getSkippedDeletionsThreshold()) {
+                    LOG(0) << "Report skippedDeletionsOp " << skippedDeletionsOp << " above threshold " << RocksCompactionScheduler::getSkippedDeletionsThreshold(); 
                     _compactionScheduler->reportSkippedDeletionsAboveThreshold(_prefix);
                 }
             }

@@ -53,7 +53,7 @@ namespace mongo {
 
     class RocksCompactionScheduler {
     public:
-        RocksCompactionScheduler();
+        RocksCompactionScheduler(bool manualPrefixCompaction = false);
         ~RocksCompactionScheduler();
 
         void start(rocksdb::DB* db);
@@ -97,6 +97,9 @@ namespace mongo {
 
         // thread for async execution of range compactions
         std::unique_ptr<CompactionBackgroundJob> _compactionJob;
+        
+        //manual prefix compaction switch
+        bool _manualPrefixCompaction;
 
         // set of all prefixes that are deleted. we delete them in the background thread
         mutable stdx::mutex _droppedPrefixesMutex;
