@@ -79,6 +79,8 @@ namespace mongo {
             "Level    Files   Size(MB) Score Read(GB)  Rn(GB) Rnp1(GB) Write(GB) Wnew(GB) Moved(GB) W-Amp Rd(MB/s) Wr(MB/s) Comp(sec) Comp(cnt) Avg(sec) KeyIn KeyDrop"
 #elif ROCKSDB_VERSION_NUM < 50405
             "Level    Files   Size(MB} Score Read(GB}  Rn(GB} Rnp1(GB} Write(GB} Wnew(GB} Moved(GB} W-Amp Rd(MB/s} Wr(MB/s} Comp(sec} Comp(cnt} Avg(sec} KeyIn KeyDrop"
+#elif ROCKSDB_VERSION_NUM >= 62800
+            "Level    Files   Size     Score Read(GB)  Rn(GB) Rnp1(GB) Write(GB) Wnew(GB) Moved(GB) W-Amp Rd(MB/s) Wr(MB/s) Comp(sec) CompMergeCPU(sec) Comp(cnt) Avg(sec) KeyIn KeyDrop Rblob(GB) Wblob(GB)"
 #else
             "Level    Files   Size     Score Read(GB)  Rn(GB) Rnp1(GB) Write(GB) Wnew(GB) Moved(GB) W-Amp Rd(MB/s) Wr(MB/s) Comp(sec) Comp(cnt) Avg(sec) KeyIn KeyDrop"
 #endif
@@ -93,15 +95,8 @@ namespace mongo {
     // Since 5.0.1 (commit 361010d447):
     // "----------------------------------------------------------------------------------------------------------------------------------------------------------",
     void RocksStatsParser::parseCompactionStatsSeparator(const std::string& line) {
-        if (line ==
-            "--------------------------------------------------------------------"
-            "-----------------------------------------------------------"
-#if ROCKSDB_VERSION_NUM < 50001
-            "--------------------------------------"
-#else
-            "---------------------------"
-#endif
-            ) {
+        // RocksDB changes the separator width when it adds statistics columns.
+        if (!line.empty() && line.find_first_not_of('-') == std::string::npos) {
             _current_parser_fn = &RocksStatsParser::parseCompactionStatsLX;
         }
     }
@@ -127,9 +122,18 @@ namespace mongo {
             "\\s*(\\w+)\\s+(\\d+)/(\\d+)\\s+(\\d+\\.\\d+)\\s+(\\w+)\\s+(\\d+\\.\\d+)" // "  L7      7/4  423.33 KB   0.0"
 #endif
             "\\s+(\\d+\\.\\d+)\\s+(\\d+\\.\\d+)\\s+(\\d+\\.\\d+)\\s+(\\d+\\.\\d+)" // "      0.0     0.0      0.0       0.0"
-            "\\s+(\\d+\\.\\d+)\\s+(\\d+\\.\\d+)\\s+(\\d+\\.\\d+)\\s+(\\d+\\.\\d+)" // "      0.0       0.0   0.0      0.0"
-            "\\s+(\\d+\\.\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+\\.\\d+)" // "      0.0         0         0    0.000"
-            "\\s+(\\d+[KMG]?)\\s+(\\d+[KMG]?)" // "       0      0"
+            // Wnew can be negative when compaction removes data.
+            "\\s+(-?\\d+\\.\\d+)\\s+(\\d+\\.\\d+)\\s+(\\d+\\.\\d+)\\s+(\\d+\\.\\d+)" // "      0.0       0.0   0.0      0.0"
+            "\\s+(\\d+\\.\\d+)\\s+(\\d+(?:\\.\\d+)?)" // Wr(MB/s), Comp(sec)
+#if ROCKSDB_VERSION_NUM >= 62800
+            // Keep the existing field mapping while skipping the new CPU column.
+            "\\s+(?:\\d+\\.\\d+)" // CompMergeCPU(sec)
+#endif
+            "\\s+(\\d+)\\s+(\\d+\\.\\d+)" // Comp(cnt), Avg(sec)
+            "\\s+(\\d+[KMG]?)\\s+(\\d+[KMG]?)" // KeyIn, KeyDrop
+#if ROCKSDB_VERSION_NUM >= 62800
+            "\\s+(?:\\d+\\.\\d+)\\s+(?:\\d+\\.\\d+)" // Rblob(GB), Wblob(GB)
+#endif
             );
         std::smatch mr;
         if (!std::regex_match(line, mr, rex)) {
@@ -173,6 +177,12 @@ namespace mongo {
 
     // "Uptime(secs): 8.8 total, 8.8 interval",
     void RocksStatsParser::parseCompactionStatsUptime(const std::string& line) {
+#if ROCKSDB_VERSION_NUM >= 62800
+        // Priority statistics and the Blob summary follow the level statistics.
+        if (line.find("Uptime(secs): ") != 0) {
+            return;
+        }
+#endif
         static std::regex rex("Uptime\\(secs\\): (\\d+\\.\\d+) total, (\\d+\\.\\d+) interval");
         std::smatch mr;
         if (!std::regex_match(line, mr, rex)) {
@@ -421,7 +431,7 @@ namespace mongo {
     void RocksStatsParser::parseDBStatsIntervalWAL(const std::string& line) {
         static std::regex rex("Interval WAL: "
                               "(\\d+[KMG]?) writes, (\\d+[KMG]?) syncs, "
-                              "(\\d+\\.\\d+) writes per sync, written: (\\d+\\.\\d+) MB, (\\d+\\.\\d+) MB/s");
+                              "(\\d+\\.\\d+) writes per sync, written: (\\d+\\.\\d+) (MB|GB), (\\d+\\.\\d+) MB/s");
         std::smatch mr;
         if (!std::regex_match(line, mr, rex)) {
             error(line);
@@ -431,7 +441,10 @@ namespace mongo {
         _bob->append("interval-WAL-writes", mr[++i].str());
         _bob->append("interval-WAL-syncs", mr[++i].str());
         _bob->append("interval-WAL-writes-per-sync", std::stod(mr[++i].str()));
-        _bob->append("interval-WAL-written-MB", std::stod(mr[++i].str()));
+        const auto written = std::stod(mr[++i].str());
+        const auto unit = mr[++i].str();
+        // RocksDB 6.28 reports GB; preserve the existing JSON field's MB unit.
+        _bob->append("interval-WAL-written-MB", toMegaBytes(written, unit));
         _bob->append("interval-WAL-written-MB-s", std::stod(mr[++i].str()));
         _current_parser_fn = &RocksStatsParser::parseDBStatsIntervalStall;
     }

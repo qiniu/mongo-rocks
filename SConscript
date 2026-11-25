@@ -38,6 +38,16 @@ env.Library(
     )
 
 env.Library(
+    target='storage_rocks_stats_parser',
+    source=[
+        'src/rocks_stats_parser.cpp',
+    ],
+    LIBDEPS=[
+        '$BUILD_DIR/mongo/base',
+    ],
+)
+
+env.Library(
     target= 'storage_rocks',
     source= [
         'src/rocks_init.cpp',
@@ -45,10 +55,10 @@ env.Library(
         'src/rocks_parameters.cpp',
         'src/rocks_record_store_mongod.cpp',
         'src/rocks_server_status.cpp',
-        'src/rocks_stats_parser.cpp',
         ],
     LIBDEPS= [
         'storage_rocks_base',
+        'storage_rocks_stats_parser',
         '$BUILD_DIR/mongo/db/storage/kv/kv_engine'
         ],
     LIBDEPS_DEPENDENTS=['$BUILD_DIR/mongo/db/serveronly']
@@ -73,6 +83,10 @@ env.Library(
         ],
     LIBDEPS= [
         'storage_rocks_base',
+        # Standalone tests need mock auth setup, command stubs and Qiniu network counters.
+        '$BUILD_DIR/mongo/db/auth/authorization_manager_mock_init',
+        '$BUILD_DIR/mongo/db/commands_test_crutch',
+        '$BUILD_DIR/mongo/db/stats/socks5counter',
         # Temporary crutch since the ssl cleanup is hard coded in background.cpp
         '$BUILD_DIR/mongo/util/net/network',
         ]
@@ -111,3 +125,13 @@ env.CppUnitTest(
         ]
    )
 
+
+env.CppUnitTest(
+    target='storage_rocks_stats_parser_test',
+    source=[
+        'src/rocks_stats_parser_test.cpp',
+    ],
+    LIBDEPS=[
+        'storage_rocks_stats_parser',
+    ],
+)
